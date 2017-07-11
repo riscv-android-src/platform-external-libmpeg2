@@ -152,6 +152,12 @@ IMPEG2D_ERROR_CODES_T impeg2d_dec_seq_hdr(dec_state_t *ps_dec)
     u2_width    = impeg2d_bit_stream_get(ps_stream,12);
     u2_height   = impeg2d_bit_stream_get(ps_stream,12);
 
+    if (0 == u2_width || 0 == u2_height)
+    {
+        IMPEG2D_ERROR_CODES_T e_error = IMPEG2D_FRM_HDR_DECODE_ERR;
+        return e_error;
+    }
+
     if ((u2_width != ps_dec->u2_horizontal_size)
                     || (u2_height != ps_dec->u2_vertical_size))
     {
@@ -710,11 +716,12 @@ IMPEG2D_ERROR_CODES_T impeg2d_dec_pic_hdr(dec_state_t *ps_dec)
 *  Arguments       :
 *  dec             : Decoder context
 *
-*  Values Returned : None
+*  Values Returned : Error
 *******************************************************************************/
-void impeg2d_dec_pic_coding_ext(dec_state_t *ps_dec)
+IMPEG2D_ERROR_CODES_T impeg2d_dec_pic_coding_ext(dec_state_t *ps_dec)
 {
     stream_t *ps_stream;
+    IMPEG2D_ERROR_CODES_T e_error = (IMPEG2D_ERROR_CODES_T) IV_SUCCESS;
 
     ps_stream = &ps_dec->s_bit_stream;
     impeg2d_bit_stream_flush(ps_stream,START_CODE_LEN);
@@ -727,6 +734,11 @@ void impeg2d_dec_pic_coding_ext(dec_state_t *ps_dec)
     ps_dec->au2_f_code[1][1]             = impeg2d_bit_stream_get(ps_stream,4);
     ps_dec->u2_intra_dc_precision        = impeg2d_bit_stream_get(ps_stream,2);
     ps_dec->u2_picture_structure            = impeg2d_bit_stream_get(ps_stream,2);
+    if (ps_dec->u2_picture_structure < TOP_FIELD ||
+                    ps_dec->u2_picture_structure > FRAME_PICTURE)
+    {
+        return IMPEG2D_FRM_HDR_DECODE_ERR;
+    }
     ps_dec->u2_top_field_first              = impeg2d_bit_stream_get_bit(ps_stream);
     ps_dec->u2_frame_pred_frame_dct         = impeg2d_bit_stream_get_bit(ps_stream);
     ps_dec->u2_concealment_motion_vectors   = impeg2d_bit_stream_get_bit(ps_stream);
@@ -754,6 +766,7 @@ void impeg2d_dec_pic_coding_ext(dec_state_t *ps_dec)
     {
         ps_dec->pu1_inv_scan_matrix = (UWORD8 *)gau1_impeg2_inv_scan_zig_zag;
     }
+    return e_error;
 }
 
 /*******************************************************************************
@@ -804,6 +817,12 @@ IMPEG2D_ERROR_CODES_T impeg2d_dec_slice(dec_state_t *ps_dec)
     {
         ps_dec->u2_mb_y    = u4_slice_vertical_position;
         ps_dec->u2_mb_x    = 0;
+
+        /* Update the number of MBs left, since we have probably missed a slice
+         * (that's why we see a mismatch between u2_mb_y and current position).
+         */
+        ps_dec->u2_num_mbs_left = (ps_dec->u2_num_vert_mb - ps_dec->u2_mb_y)
+                        * ps_dec->u2_num_horiz_mb;
     }
     ps_dec->u2_first_mb = 1;
 
@@ -1712,7 +1731,11 @@ IMPEG2D_ERROR_CODES_T impeg2d_process_video_bit_stream(dec_state_t *ps_dec)
                 {
                     return e_error;
                 }
-                impeg2d_dec_pic_coding_ext(ps_dec);
+                e_error = impeg2d_dec_pic_coding_ext(ps_dec);
+                if ((IMPEG2D_ERROR_CODES_T)IVD_ERROR_NONE != e_error)
+                {
+                    return e_error;
+                }
                 e_error = impeg2d_dec_pic_ext_data(ps_dec);
                 if ((IMPEG2D_ERROR_CODES_T)IVD_ERROR_NONE != e_error)
                 {
@@ -1732,6 +1755,15 @@ IMPEG2D_ERROR_CODES_T impeg2d_process_video_bit_stream(dec_state_t *ps_dec)
             if(u4_start_code_found == 0)
             {
                 impeg2d_next_start_code(ps_dec);
+                /* In case a dec_pic_data call has not been made, the number of
+                 * bytes consumed in the previous header decode has to be
+                 * consumed. Not consuming it will result in zero bytes consumed
+                 * loops in case there are multiple headers and the second
+                 * or a future header has a resolution change/other error where
+                 * the bytes of the last header are not consumed.
+                 */
+                ps_dec->i4_bytes_consumed = (ps_dec->s_bit_stream.u4_offset + 7) >> 3;
+                ps_dec->i4_bytes_consumed -= ((size_t)ps_dec->s_bit_stream.pv_bs_buf & 3);
             }
         }
         if((u4_start_code_found == 0) && (ps_dec->s_bit_stream.u4_offset > ps_dec->s_bit_stream.u4_max_offset))
@@ -1798,7 +1830,18 @@ IMPEG2D_ERROR_CODES_T impeg2d_process_video_bit_stream(dec_state_t *ps_dec)
                 FLUSH_BITS(ps_dec->s_bit_stream.u4_offset, ps_dec->s_bit_stream.u4_buf, ps_dec->s_bit_stream.u4_buf_nxt, 8, ps_dec->s_bit_stream.pu4_buf_aligned);
             }
             impeg2d_next_start_code(ps_dec);
-
+            if (0 == u4_start_code_found)
+            {
+                /* In case a dec_pic_data call has not been made, the number of
+                 * bytes consumed in the previous header decode has to be
+                 * consumed. Not consuming it will result in zero bytes consumed
+                 * loops in case there are multiple headers and the second
+                 * or a future header has a resolution change/other error where
+                 * the bytes of the last header are not consumed.
+                 */
+                ps_dec->i4_bytes_consumed = (ps_dec->s_bit_stream.u4_offset + 7) >> 3;
+                ps_dec->i4_bytes_consumed -= ((size_t)ps_dec->s_bit_stream.pv_bs_buf & 3);
+            }
         }
         if((u4_start_code_found == 0) && (ps_dec->s_bit_stream.u4_offset > ps_dec->s_bit_stream.u4_max_offset))
         {
