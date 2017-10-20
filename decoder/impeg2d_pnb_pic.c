@@ -77,6 +77,12 @@ WORD32  impeg2d_dec_p_mb_params(dec_state_t *ps_dec)
     else
     {
         u2_mb_addr_incr = impeg2d_get_mb_addr_incr(ps_stream);
+
+        if(!u2_mb_addr_incr)
+        {
+            return IV_FAIL;
+        }
+
         if(0 == ps_dec->u2_first_mb)
         {
             /****************************************************************/
@@ -510,6 +516,12 @@ IMPEG2D_ERROR_CODES_T impeg2d_dec_p_b_slice(dec_state_t *ps_dec)
 
         if(ret)
             return IMPEG2D_MB_TEX_DECODE_ERR;
+
+        if(0 >= ps_dec->u2_num_mbs_left)
+        {
+            break;
+        }
+
         IMPEG2D_TRACE_MB_START(ps_dec->u2_mb_x, ps_dec->u2_mb_y);
 
         u4_x_dst_offset = u4_frm_offset + (ps_dec->u2_mb_x << 4);
