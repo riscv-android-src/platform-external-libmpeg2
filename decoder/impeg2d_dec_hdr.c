@@ -173,7 +173,16 @@ IMPEG2D_ERROR_CODES_T impeg2d_dec_seq_hdr(dec_state_t *ps_dec)
         }
         else
         {
-            if((u2_width > ps_dec->u2_create_max_width)
+            if (0 == ps_dec->i4_pic_count)
+            {
+                /* Decoder has not decoded a single frame since the last
+                 * reset/init. This implies that we have two headers in the
+                 * input stream. So, do not indicate a resolution change, since
+                 * this can take the decoder into an infinite loop.
+                 */
+                return (IMPEG2D_ERROR_CODES_T) IMPEG2D_FRM_HDR_DECODE_ERR;
+            }
+            else if((u2_width > ps_dec->u2_create_max_width)
                             || (u2_height > ps_dec->u2_create_max_height))
             {
                 IMPEG2D_ERROR_CODES_T e_error = IMPEG2D_UNSUPPORTED_DIMENSIONS;
@@ -935,7 +944,7 @@ void impeg2d_dec_pic_data_thread(dec_state_t *ps_dec)
                 {
                     pu1_buf = ps_dec->pu1_inp_bits_buf + s_job.i4_bistream_ofst;
                     impeg2d_bit_stream_init(&(ps_dec->s_bit_stream), pu1_buf,
-                            (ps_dec->u4_num_inp_bytes - s_job.i4_bistream_ofst) + 8);
+                            (ps_dec->u4_num_inp_bytes - s_job.i4_bistream_ofst));
                     i4_cur_row      = s_job.i2_start_mb_y;
                     ps_dec->i4_start_mb_y = s_job.i2_start_mb_y;
                     ps_dec->i4_end_mb_y = s_job.i2_end_mb_y;
@@ -977,6 +986,11 @@ void impeg2d_dec_pic_data_thread(dec_state_t *ps_dec)
             if ((IMPEG2D_ERROR_CODES_T)IVD_ERROR_NONE != e_error)
             {
                 impeg2d_next_start_code(ps_dec);
+                if(ps_dec->s_bit_stream.u4_offset >= ps_dec->s_bit_stream.u4_max_offset)
+                {
+                    ps_dec->u4_error_code = IMPEG2D_BITSTREAM_BUFF_EXCEEDED_ERR;
+                    return;
+                }
             }
         }
 
@@ -1089,6 +1103,7 @@ static WORD32 impeg2d_init_thread_dec_ctxt(dec_state_t *ps_dec,
     ps_dec_thd->u2_mb_x = 0;
     ps_dec_thd->u2_mb_y = 0;
     ps_dec_thd->u2_is_mpeg2 = ps_dec->u2_is_mpeg2;
+    ps_dec_thd->i4_pic_count = ps_dec->i4_pic_count;
     ps_dec_thd->u2_frame_width = ps_dec->u2_frame_width;
     ps_dec_thd->u2_frame_height = ps_dec->u2_frame_height;
     ps_dec_thd->u2_picture_width = ps_dec->u2_picture_width;
@@ -1358,8 +1373,6 @@ void impeg2d_dec_pic_data(dec_state_t *ps_dec)
     WORD32 i;
     dec_state_multi_core_t *ps_dec_state_multi_core;
 
-    UWORD32  u4_error_code;
-
     dec_state_t *ps_dec_thd;
     WORD32 i4_status;
     WORD32 i4_min_mb_y;
@@ -1367,7 +1380,6 @@ void impeg2d_dec_pic_data(dec_state_t *ps_dec)
 
     /* Resetting the MB address and MB coordinates at the start of the Frame */
     ps_dec->u2_mb_x = ps_dec->u2_mb_y = 0;
-    u4_error_code = 0;
 
     ps_dec_state_multi_core = ps_dec->ps_dec_state_multi_core;
     impeg2d_get_slice_pos(ps_dec_state_multi_core);
@@ -1410,8 +1422,6 @@ void impeg2d_dec_pic_data(dec_state_t *ps_dec)
             ithread_join(ps_dec_thd->pv_codec_thread_handle, NULL);
         }
     }
-
-    ps_dec->u4_error_code = u4_error_code;
 
 }
 /*******************************************************************************
@@ -1746,6 +1756,7 @@ IMPEG2D_ERROR_CODES_T impeg2d_process_video_bit_stream(dec_state_t *ps_dec)
             else if((ps_dec->s_bit_stream.u4_offset < ps_dec->s_bit_stream.u4_max_offset)
                     && (u4_next_bits == PICTURE_START_CODE))
             {
+                ps_dec->i4_pic_count++;
 
                 e_error = impeg2d_dec_pic_hdr(ps_dec);
                 if ((IMPEG2D_ERROR_CODES_T)IVD_ERROR_NONE != e_error)
@@ -1838,6 +1849,7 @@ IMPEG2D_ERROR_CODES_T impeg2d_process_video_bit_stream(dec_state_t *ps_dec)
             else if ((impeg2d_bit_stream_nxt(ps_stream,START_CODE_LEN) == PICTURE_START_CODE)
                     && (ps_dec->s_bit_stream.u4_offset < ps_dec->s_bit_stream.u4_max_offset))
             {
+                ps_dec->i4_pic_count++;
 
                 e_error = impeg2d_dec_pic_hdr(ps_dec);
                 if ((IMPEG2D_ERROR_CODES_T)IVD_ERROR_NONE != e_error)
