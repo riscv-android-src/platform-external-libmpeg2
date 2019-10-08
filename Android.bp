@@ -1,6 +1,7 @@
 cc_library_static {
     name: "libmpeg2dec",
     vendor_available: true,
+    host_supported:true,
     shared_libs: ["liblog", "libcutils"],
 
     cflags: [
@@ -209,6 +210,13 @@ cc_library_static {
                 "common/x86/impeg2_mem_func_sse42_intr.c",
             ],
         },
+    },
+    sanitize: {
+        integer_overflow: true,
+        misc_undefined: ["bounds"],
+        // Enable CFI if this becomes a shared library.
+        // cfi: true,
+        blacklist: "libmpeg2dec_blacklist.txt",
     },
 }
 
