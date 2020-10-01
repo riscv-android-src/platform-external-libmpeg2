@@ -44,9 +44,6 @@
 #include <signal.h>
 #endif
 
-#ifndef IOS
-#include <malloc.h>
-#endif
 #ifdef IOS_DISPLAY
 #include "cast_types.h"
 #else
@@ -453,7 +450,12 @@ void app_aligned_free(void *pv_buf)
 #if (!defined(IOS)) && (!defined(_WIN32))
 void* app_aligned_malloc(WORD32 alignment, WORD32 size)
 {
-    return memalign(alignment, size);
+    void *buf = NULL;
+    if (0 != posix_memalign(&buf, alignment, size))
+    {
+        return NULL;
+    }
+    return buf;
 }
 
 void app_aligned_free(void *pv_buf)
@@ -3110,8 +3112,8 @@ int main(WORD32 argc, CHAR *argv[])
         {
             ithread_join(s_app_ctx.display_thread_handle, NULL);
         }
-        free(s_app_ctx.display_thread_handle);
     }
+    free(s_app_ctx.display_thread_handle);
 
     {
         iv_retrieve_mem_rec_ip_t s_retrieve_dec_ip;
